@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; }
         #search-container { padding: 10px; background: white; z-index: 1000; }
@@ -30,14 +31,25 @@
     <div id="map"></div>
     <div id="footer">
         <button id="confirm-btn" disabled>✅ Подтвердить адрес</button>
-        <div class="status" id="status">⬆️ Введите адрес или выберите на карте</div>
+        <div class="status" id="status">📍 Введите адрес или выберите на карте</div>
     </div>
 
     <script>
+        // Инициализация Telegram WebApp
+        let tg = window.Telegram?.WebApp;
+        if (tg) {
+            tg.ready();
+            tg.expand();
+            tg.enableClosingConfirmation(); // Запрос подтверждения перед закрытием
+            console.log("Telegram WebApp инициализирован");
+        } else {
+            console.warn("Telegram WebApp не найден, работаем в тестовом режиме");
+        }
+
         let map;
         let marker;
         let selectedCoords = null;
-        let selectedAddress = '';
+        let selectedAddress = "";
         let isProcessing = false;
 
         // Инициализация карты (центр Ташкента)
@@ -47,10 +59,11 @@
         }).addTo(map);
 
         // Создаём перемещаемый маркер (изначально скрыт)
-        marker = L.marker([41.311, 69.279], { draggable: true }).addTo(map);
+        marker = L.marker([41.311, 69.279], {draggable: true}).addTo(map);
         marker.on('dragend', function(e) {
             var pos = e.target.getLatLng();
             selectedCoords = [pos.lat, pos.lng];
+            
             // Получаем адрес по координатам (обратное геокодирование)
             fetch(`https://nominatim.openstreetmap.org/reverse?lat=${pos.lat}&lon=${pos.lng}&format=json`)
                 .then(r => r.json())
@@ -66,7 +79,8 @@
                     document.getElementById('confirm-btn').disabled = false;
                 });
         });
-        // Прячем маркер, пока ничего не выбрано
+
+        // Скрываем маркер, пока ничего не выбрано
         map.removeLayer(marker);
 
         // Поиск подсказок через Nominatim
@@ -126,22 +140,30 @@
             if (isProcessing || !selectedCoords) return;
             isProcessing = true;
             document.getElementById('status').innerHTML = '<span class="loader"></span> Отправка...';
+            
             const result = {
                 lat: selectedCoords[0],
                 lon: selectedCoords[1],
                 address: selectedAddress
             };
-            console.log('📦 Отправка:', result);
-            if (window.Telegram && Telegram.WebApp) {
-                Telegram.WebApp.sendData(JSON.stringify(result));
-                setTimeout(() => Telegram.WebApp.close(), 300);
+            
+            console.log('Отправка:', result);
+            
+            if (tg) {
+                try {
+                    tg.sendData(JSON.stringify(result));
+                    tg.close();
+                } catch (e) {
+                    console.error('Ошибка отправки в Telegram:', e);
+                    alert('Ошибка отправки: ' + e.message);
+                    isProcessing = false;
+                }
             } else {
-                alert('Адрес выбран:\n' + JSON.stringify(result));
+                alert('Адрес выбран (тестовый режим):\n' + JSON.stringify(result));
                 isProcessing = false;
-                document.getElementById('status').innerText = '✅ Адрес получен (тест)';
+                document.getElementById('status').innerText = 'Адрес получен (тест)';
             }
         });
     </script>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </body>
 </html>
