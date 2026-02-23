@@ -4,41 +4,77 @@
     <meta charset="utf-8">
     <title>Выбор адреса</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        body { margin: 0; padding: 20px; font-family: sans-serif; background: #f5f5f5; }
-        .container { max-width: 500px; margin: 0 auto; }
-        #address { width: 100%; padding: 15px; font-size: 18px; border: 1px solid #ccc; border-radius: 10px; box-sizing: border-box; }
-        #suggestions { list-style: none; padding: 0; margin: 10px 0 0; background: white; border: 1px solid #ccc; border-radius: 5px; max-height: 200px; overflow-y: auto; display: none; }
-        #suggestions li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
+        body { margin: 0; padding: 0; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; }
+        #search-container { padding: 10px; background: white; z-index: 1000; }
+        #address { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+        #suggestions { list-style: none; padding: 0; margin: 5px 0 0; background: white; border: 1px solid #ccc; border-radius: 5px; max-height: 150px; overflow-y: auto; display: none; }
+        #suggestions li { padding: 8px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 14px; }
         #suggestions li:hover { background: #f0f0f0; }
-        #status { margin-top: 20px; text-align: center; color: #666; }
-        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; display: none; }
+        #map { flex: 1; width: 100%; }
+        #footer { padding: 10px; background: white; border-top: 1px solid #ddd; }
+        #confirm-btn { width: 100%; padding: 15px; font-size: 18px; background: #007AFF; color: white; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; }
+        #confirm-btn:disabled { background: #ccc; cursor: not-allowed; }
+        .status { text-align: center; margin-top: 8px; color: #666; font-size: 14px; }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; margin: 0 auto; display: inline-block; vertical-align: middle; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h3>📍 Введите адрес или название организации</h3>
-        <input type="text" id="address" placeholder="Например: Гульсара, Голливуд, Ашан..." autocomplete="off" autofocus>
+    <div id="search-container">
+        <input type="text" id="address" placeholder="Введите адрес или организацию" autocomplete="off" autofocus>
         <ul id="suggestions"></ul>
-        <div id="loader" class="loader"></div>
-        <div id="status"></div>
+    </div>
+    <div id="map"></div>
+    <div id="footer">
+        <button id="confirm-btn" disabled>✅ Подтвердить адрес</button>
+        <div class="status" id="status">⬆️ Введите адрес или выберите на карте</div>
     </div>
 
     <script>
-        let isProcessing = false;
+        let map;
+        let marker;
         let selectedCoords = null;
         let selectedAddress = '';
-        let suggestionsList = document.getElementById('suggestions');
-        let addressInput = document.getElementById('address');
-        let loader = document.getElementById('loader');
-        let status = document.getElementById('status');
-        let timeoutId = null;
+        let isProcessing = false;
 
-        addressInput.addEventListener('input', function() {
-            const query = this.value.trim();
+        // Инициализация карты (центр Ташкента)
+        map = L.map('map').setView([41.311, 69.279], 12);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Создаём перемещаемый маркер (изначально скрыт)
+        marker = L.marker([41.311, 69.279], { draggable: true }).addTo(map);
+        marker.on('dragend', function(e) {
+            var pos = e.target.getLatLng();
+            selectedCoords = [pos.lat, pos.lng];
+            // Получаем адрес по координатам (обратное геокодирование)
+            fetch(`https://nominatim.openstreetmap.org/reverse?lat=${pos.lat}&lon=${pos.lng}&format=json`)
+                .then(r => r.json())
+                .then(data => {
+                    selectedAddress = data.display_name || 'Перемещённая точка';
+                    document.getElementById('address').value = selectedAddress;
+                    document.getElementById('confirm-btn').disabled = false;
+                    document.getElementById('status').innerText = '✅ Адрес получен с карты';
+                })
+                .catch(() => {
+                    selectedAddress = `Координаты: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
+                    document.getElementById('address').value = selectedAddress;
+                    document.getElementById('confirm-btn').disabled = false;
+                });
+        });
+        // Прячем маркер, пока ничего не выбрано
+        map.removeLayer(marker);
+
+        // Поиск подсказок через Nominatim
+        let timeoutId = null;
+        document.getElementById('address').addEventListener('input', function(e) {
+            const query = e.target.value.trim();
             if (query.length < 3) {
-                suggestionsList.style.display = 'none';
+                document.getElementById('suggestions').style.display = 'none';
                 return;
             }
             if (timeoutId) clearTimeout(timeoutId);
@@ -47,59 +83,64 @@
 
         function fetchSuggestions(query) {
             const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&limit=10&countrycodes=uz`;
-            fetch(url, {
-                headers: { 'User-Agent': 'TaxiBot/1.0 (your-email@example.com)' } // ⬅️ замените на свои данные
-            })
-            .then(response => response.json())
-            .then(data => {
-                displaySuggestions(data);
-            })
-            .catch(error => {
-                console.error('Ошибка Nominatim:', error);
-                status.innerText = '❌ Ошибка загрузки подсказок';
-            });
+            fetch(url, { headers: { 'User-Agent': 'TaxiBot/1.0' } })
+                .then(r => r.json())
+                .then(data => displaySuggestions(data))
+                .catch(err => console.error('Nominatim error:', err));
         }
 
         function displaySuggestions(items) {
-            suggestionsList.innerHTML = '';
+            const list = document.getElementById('suggestions');
+            list.innerHTML = '';
             if (items.length === 0) {
-                suggestionsList.style.display = 'none';
+                list.style.display = 'none';
                 return;
             }
             items.forEach(item => {
                 const li = document.createElement('li');
                 li.textContent = item.display_name;
-                li.addEventListener('click', () => selectAddress(item));
-                suggestionsList.appendChild(li);
+                li.addEventListener('click', () => selectSuggestion(item));
+                list.appendChild(li);
             });
-            suggestionsList.style.display = 'block';
+            list.style.display = 'block';
         }
 
-        function selectAddress(item) {
-            if (isProcessing) return;
-            isProcessing = true;
-            selectedCoords = [parseFloat(item.lat), parseFloat(item.lon)];
+        function selectSuggestion(item) {
+            document.getElementById('suggestions').style.display = 'none';
+            const lat = parseFloat(item.lat);
+            const lon = parseFloat(item.lon);
+            selectedCoords = [lat, lon];
             selectedAddress = item.display_name;
-            suggestionsList.style.display = 'none';
-            addressInput.value = selectedAddress;
-            loader.style.display = 'block';
-            status.innerText = '✅ Отправка...';
-            sendResult(selectedAddress, selectedCoords);
+            document.getElementById('address').value = selectedAddress;
+            document.getElementById('confirm-btn').disabled = false;
+            document.getElementById('status').innerText = '✅ Адрес выбран из списка';
+
+            // Показываем и перемещаем маркер
+            if (!map.hasLayer(marker)) marker.addTo(map);
+            marker.setLatLng([lat, lon]);
+            map.setView([lat, lon], 15);
         }
 
-        function sendResult(address, coords) {
-            const result = { lat: coords[0], lon: coords[1], address: address };
-            console.log('✅ Результат:', result);
+        // Кнопка подтверждения
+        document.getElementById('confirm-btn').addEventListener('click', function() {
+            if (isProcessing || !selectedCoords) return;
+            isProcessing = true;
+            document.getElementById('status').innerHTML = '<span class="loader"></span> Отправка...';
+            const result = {
+                lat: selectedCoords[0],
+                lon: selectedCoords[1],
+                address: selectedAddress
+            };
+            console.log('📦 Отправка:', result);
             if (window.Telegram && Telegram.WebApp) {
                 Telegram.WebApp.sendData(JSON.stringify(result));
                 setTimeout(() => Telegram.WebApp.close(), 300);
             } else {
                 alert('Адрес выбран:\n' + JSON.stringify(result));
-                loader.style.display = 'none';
-                status.innerText = '';
                 isProcessing = false;
+                document.getElementById('status').innerText = '✅ Адрес получен (тест)';
             }
-        }
+        });
     </script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </body>
