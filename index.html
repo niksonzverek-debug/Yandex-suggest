@@ -2,94 +2,39 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Выбор адреса</title>
+    <title>Тест карты</title>
     <script src="https://api-maps.yandex.ru/2.1/?apikey=05bead68-7d43-45f3-92ac-a086140b1f39&lang=ru_RU" type="text/javascript"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; }
-        #map { flex: 1; width: 100%; }
-        #confirm-btn {
-            background: #007AFF;
-            color: white;
-            border: none;
-            padding: 16px;
-            font-size: 20px;
-            font-weight: bold;
-            width: 100%;
-            cursor: pointer;
-            transition: opacity 0.2s;
-        }
-        #confirm-btn:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
-        .status {
-            text-align: center;
-            padding: 10px;
-            background: #f0f0f0;
-        }
+        body { margin: 0; padding: 0; }
+        #map { width: 100%; height: 100vh; }
+        #address { position: absolute; top: 10px; left: 10px; width: 80%; padding: 10px; z-index: 1000; }
     </style>
 </head>
 <body>
+    <input type="text" id="address" placeholder="Введите адрес">
     <div id="map"></div>
-    <button id="confirm-btn" disabled>✅ Подтвердить адрес</button>
-    <div class="status" id="status">Найдите адрес на карте</div>
-
     <script>
         let map;
-        let selectedCoords = null;
-        let selectedAddress = '';
-
         ymaps.ready(init);
-
         function init() {
-            map = new ymaps.Map('map', {
-                center: [41.311, 69.279],
-                zoom: 12
-            });
-
-            // Добавляем поиск
-            var searchControl = new ymaps.control.SearchControl({
-                options: { float: 'right' }
-            });
-            map.controls.add(searchControl);
-
-            // Когда пользователь выбирает результат в поиске
-            searchControl.events.add('resultselect', function (e) {
-                var index = e.get('index');
-                searchControl.getResult(index).then(function (result) {
-                    var coords = result.geometry.getCoordinates();
-                    var address = result.properties.get('name') || result.properties.get('description') || 'Выбранное место';
-                    selectedCoords = coords;
-                    selectedAddress = address;
-                    document.getElementById('confirm-btn').disabled = false;
-                    document.getElementById('status').innerText = '✅ Адрес: ' + address;
+            map = new ymaps.Map('map', { center: [41.311, 69.279], zoom: 12 });
+            var suggestView = new ymaps.controls.SuggestView('address');
+            suggestView.events.add('select', function (e) {
+                var item = e.get('item');
+                var address = item.displayName;
+                alert('Выбран адрес: ' + address);
+                // Дополнительно покажем координаты через геокодирование
+                ymaps.geocode(address).then(function (res) {
+                    var first = res.geoObjects.get(0);
+                    if (first) {
+                        var coords = first.geometry.getCoordinates();
+                        alert('Координаты: ' + coords);
+                    } else {
+                        alert('Не удалось получить координаты');
+                    }
                 });
             });
         }
-
-        // Кнопка подтверждения
-        document.getElementById('confirm-btn').addEventListener('click', function() {
-            if (!selectedCoords) {
-                alert('Сначала выберите адрес');
-                return;
-            }
-            const result = {
-                lat: selectedCoords[0],
-                lon: selectedCoords[1],
-                address: selectedAddress
-            };
-            console.log('📦 Отправка:', result);
-
-            // Отправляем в Telegram Mini App
-            if (window.Telegram && Telegram.WebApp) {
-                Telegram.WebApp.sendData(JSON.stringify(result));
-                // Закрываем после отправки
-                Telegram.WebApp.close();
-            } else {
-                alert('Адрес выбран (тест):\n' + JSON.stringify(result));
-            }
-        });
     </script>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </body>
 </html>
