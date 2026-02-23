@@ -2,39 +2,128 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Тест карты</title>
+    <title>Выбор адреса</title>
     <script src="https://api-maps.yandex.ru/2.1/?apikey=05bead68-7d43-45f3-92ac-a086140b1f39&lang=ru_RU" type="text/javascript"></script>
     <style>
-        body { margin: 0; padding: 0; }
-        #map { width: 100%; height: 100vh; }
-        #address { position: absolute; top: 10px; left: 10px; width: 80%; padding: 10px; z-index: 1000; }
+        body { margin: 0; padding: 0; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; }
+        #map { flex: 1; width: 100%; }
+        .search-panel {
+            padding: 12px;
+            background: white;
+            border-bottom: 1px solid #ddd;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        #address {
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-sizing: border-box;
+        }
+        #status {
+            text-align: center;
+            padding: 8px;
+            font-size: 14px;
+            color: #666;
+        }
+        .error { color: #d32f2f; }
+        .success { color: #388e3c; }
     </style>
 </head>
 <body>
-    <input type="text" id="address" placeholder="Введите адрес">
+    <div class="search-panel">
+        <input type="text" id="address" placeholder="Введите адрес (например, Гульсара)" autocomplete="off" autofocus>
+    </div>
     <div id="map"></div>
+    <div id="status">⬆️ Начните вводить адрес и выберите из списка</div>
+
     <script>
         let map;
+        let isProcessing = false;
+
         ymaps.ready(init);
+
         function init() {
-            map = new ymaps.Map('map', { center: [41.311, 69.279], zoom: 12 });
+            map = new ymaps.Map('map', {
+                center: [41.311, 69.279],
+                zoom: 12
+            });
+
+            // Подключаем подсказки к полю ввода
             var suggestView = new ymaps.controls.SuggestView('address');
+
             suggestView.events.add('select', function (e) {
+                if (isProcessing) return;
+                isProcessing = true;
+
                 var item = e.get('item');
-                var address = item.displayName;
-                alert('Выбран адрес: ' + address);
-                // Дополнительно покажем координаты через геокодирование
-                ymaps.geocode(address).then(function (res) {
+                var selectedAddress = item.displayName;
+                setStatus('🔍 Ищем координаты...', '');
+
+                // Геокодируем выбранный адрес
+                ymaps.geocode(selectedAddress).then(function (res) {
                     var first = res.geoObjects.get(0);
                     if (first) {
                         var coords = first.geometry.getCoordinates();
-                        alert('Координаты: ' + coords);
+                        var fullAddress = first.getAddressLine() || selectedAddress;
+
+                        // Обновляем карту
+                        map.geoObjects.removeAll();
+                        var placemark = new ymaps.Placemark(coords, {
+                            balloonContent: fullAddress
+                        });
+                        map.geoObjects.add(placemark);
+                        map.setCenter(coords, 15);
+
+                        setStatus('✅ Адрес получен, отправляем...', 'success');
+                        sendData(fullAddress, coords);
                     } else {
-                        alert('Не удалось получить координаты');
+                        throw new Error('Не удалось получить координаты');
                     }
+                }).catch(function (err) {
+                    console.error(err);
+                    setStatus('❌ Ошибка геокодирования. Попробуйте другой адрес.', 'error');
+                    isProcessing = false;
                 });
             });
         }
+
+        function sendData(address, coords) {
+            const result = {
+                lat: coords[0],
+                lon: coords[1],
+                address: address
+            };
+
+            console.log('📦 Отправка результата:', result);
+
+            if (window.Telegram && Telegram.WebApp) {
+                try {
+                    Telegram.WebApp.sendData(JSON.stringify(result));
+                    // Не закрываем сразу, чтобы пользователь увидел статус
+                    setTimeout(function() {
+                        Telegram.WebApp.close();
+                    }, 500);
+                } catch (e) {
+                    console.error('❌ Ошибка отправки в Telegram:', e);
+                    setStatus('❌ Ошибка отправки: ' + e.message, 'error');
+                    isProcessing = false;
+                }
+            } else {
+                // Тест вне Telegram
+                alert('✅ Адрес выбран!\n' + JSON.stringify(result));
+                setStatus('✅ Тест: адрес получен', 'success');
+                isProcessing = false;
+            }
+        }
+
+        function setStatus(text, className) {
+            var el = document.getElementById('status');
+            el.textContent = text;
+            el.className = className || '';
+        }
     </script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </body>
 </html>
