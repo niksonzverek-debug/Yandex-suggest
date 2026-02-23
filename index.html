@@ -24,7 +24,7 @@
         <button id="locate" class="location-btn">📍 Моё местоположение</button>
     </div>
     <div id="map"></div>
-    <div class="note">Начните вводить адрес и выберите из списка</div>
+    <div class="note">Начните вводить адрес или используйте поиск на карте</div>
     <div id="loader" class="loader"></div>
     <div id="errorMsg" class="error"></div>
     <div id="successMsg" class="success">✅ Адрес выбран, отправляем...</div>
@@ -32,6 +32,7 @@
     <script>
         let map = null;
         let isProcessing = false;
+        let isSent = false; // флаг, чтобы не отправить дважды
 
         ymaps.ready(init);
 
@@ -55,6 +56,7 @@
 
             // Обрабатываем событие выбора результата в поиске
             searchControl.events.add('resultselect', function (e) {
+                if (isSent) return;
                 var index = e.get('index');
                 searchControl.getResult(index).then(function (res) {
                     var coords = res.geometry.getCoordinates();
@@ -66,6 +68,7 @@
 
             // Также обрабатываем событие "load" для результатов поиска (если пользователь нажал Enter)
             searchControl.events.add('load', function (e) {
+                if (isSent) return;
                 var results = e.get('target').getResultsArray();
                 if (results && results.length > 0) {
                     var first = results[0];
@@ -81,7 +84,7 @@
             
             // Обработка выбора подсказки из поля ввода
             suggestView.events.add('select', function (e) {
-                if (isProcessing) return;
+                if (isProcessing || isSent) return;
                 isProcessing = true;
                 
                 var item = e.get('item');
@@ -119,6 +122,7 @@
 
         // Функция для обработки выбранного адреса и координат
         function processSelection(address, coords) {
+            if (isSent) return; // уже отправили
             console.log('processSelection:', address, coords);
             document.getElementById('loader').style.display = 'block';
             document.getElementById('errorMsg').innerText = '';
@@ -144,8 +148,17 @@
 
             // Отправка в Telegram (если запущено как Mini App)
             if (window.Telegram && Telegram.WebApp) {
-                Telegram.WebApp.sendData(JSON.stringify(result));
-                // Telegram.WebApp.close();
+                try {
+                    Telegram.WebApp.sendData(JSON.stringify(result));
+                    isSent = true;
+                    // Закрываем приложение после отправки (небольшая задержка для гарантии)
+                    setTimeout(function() {
+                        Telegram.WebApp.close();
+                    }, 100);
+                } catch (e) {
+                    console.error('Ошибка отправки в Telegram:', e);
+                    alert('Ошибка отправки: ' + e.message);
+                }
             } else {
                 alert('Адрес выбран!\n' + JSON.stringify(result));
             }
