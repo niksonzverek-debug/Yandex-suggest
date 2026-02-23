@@ -2,95 +2,68 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Выбор адреса</title>
-    <script src="https://api-maps.yandex.ru/2.1/?apikey=05bead68-7d43-45f3-92ac-a086140b1f39&suggest_apikey=c26df761-b526-4c54-a189-34d436e07268&lang=ru_RU&load=Map,Placemark,geocode,control.SuggestView" type="text/javascript"></script>
+    <title>Введите адрес</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- Подключаем только SuggestView и геокодер (без карты) -->
+    <script src="https://api-maps.yandex.ru/2.1/?apikey=05bead68-7d43-45f3-92ac-a086140b1f39&suggest_apikey=c26df761-b526-4c54-a189-34d436e07268&lang=ru_RU&load=SuggestView,geocode" type="text/javascript"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; }
-        #map { flex: 1; width: 100%; }
-        .search-panel { padding: 12px; background: white; border-bottom: 1px solid #ddd; }
-        #address { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
-        #status { text-align: center; padding: 8px; font-size: 14px; color: #666; }
-        .error { color: #d32f2f; }
-        .success { color: #388e3c; }
+        body { margin: 0; padding: 20px; font-family: sans-serif; background: #f5f5f5; }
+        .container { max-width: 500px; margin: 0 auto; }
+        #address { width: 100%; padding: 15px; font-size: 18px; border: 1px solid #ccc; border-radius: 10px; box-sizing: border-box; }
+        #status { margin-top: 20px; text-align: center; color: #666; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; display: none; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-    <div class="search-panel">
-        <input type="text" id="address" placeholder="Введите адрес (например, Гульсара)" autocomplete="off" autofocus>
+    <div class="container">
+        <h3>📍 Введите адрес назначения</h3>
+        <input type="text" id="address" placeholder="Например: Гульсара, Голливуд..." autocomplete="off" autofocus>
+        <div id="loader" class="loader"></div>
+        <div id="status"></div>
     </div>
-    <div id="map"></div>
-    <div id="status">⬆️ Начните вводить адрес и выберите из списка</div>
 
     <script>
-        let map;
         let isProcessing = false;
 
-        ymaps.ready(init);
-
-        function init() {
-            console.log('✅ API загружен');
-            map = new ymaps.Map('map', {
-                center: [41.311, 69.279],
-                zoom: 12
-            });
-
+        ymaps.ready(function() {
             var suggestView = new ymaps.controls.SuggestView('address');
             suggestView.events.add('select', function (e) {
                 if (isProcessing) return;
                 isProcessing = true;
                 var item = e.get('item');
                 var selectedAddress = item.displayName;
-                setStatus('🔍 Ищем координаты...', '');
+                document.getElementById('loader').style.display = 'block';
+                document.getElementById('status').innerText = '🔍 Ищем координаты...';
 
                 ymaps.geocode(selectedAddress).then(function (res) {
                     var first = res.geoObjects.get(0);
                     if (first) {
                         var coords = first.geometry.getCoordinates();
                         var fullAddress = first.getAddressLine() || selectedAddress;
-                        map.geoObjects.removeAll();
-                        map.geoObjects.add(new ymaps.Placemark(coords, { balloonContent: fullAddress }));
-                        map.setCenter(coords, 15);
-                        setStatus('✅ Отправка...', 'success');
-                        sendData(fullAddress, coords);
+                        var result = { lat: coords[0], lon: coords[1], address: fullAddress };
+                        console.log('✅ Результат:', result);
+                        document.getElementById('status').innerText = '✅ Отправка...';
+                        if (window.Telegram && Telegram.WebApp) {
+                            Telegram.WebApp.sendData(JSON.stringify(result));
+                            setTimeout(() => Telegram.WebApp.close(), 300);
+                        } else {
+                            alert('Адрес выбран:\n' + JSON.stringify(result));
+                            document.getElementById('loader').style.display = 'none';
+                            isProcessing = false;
+                        }
                     } else {
-                        throw new Error('Геокодирование не дало результатов');
+                        throw new Error('Не удалось найти координаты');
                     }
                 }).catch(function (err) {
                     console.error(err);
-                    setStatus('❌ Ошибка. Попробуйте другой адрес.', 'error');
+                    document.getElementById('status').innerText = '❌ Ошибка. Попробуйте другой адрес.';
+                    document.getElementById('loader').style.display = 'none';
                     isProcessing = false;
                 });
             });
-
-            suggestView.events.add('error', function (err) {
-                console.error('Ошибка SuggestView:', err);
-                setStatus('❌ Ошибка подсказок', 'error');
-            });
-        }
-
-        function sendData(address, coords) {
-            const result = { lat: coords[0], lon: coords[1], address: address };
-            if (window.Telegram && Telegram.WebApp) {
-                try {
-                    Telegram.WebApp.sendData(JSON.stringify(result));
-                    setTimeout(() => Telegram.WebApp.close(), 300);
-                } catch (e) {
-                    console.error(e);
-                    setStatus('❌ Ошибка отправки', 'error');
-                    isProcessing = false;
-                }
-            } else {
-                alert('✅ Адрес выбран!\n' + JSON.stringify(result));
-                setStatus('✅ Тест', 'success');
-                isProcessing = false;
-            }
-        }
-
-        function setStatus(text, className) {
-            document.getElementById('status').textContent = text;
-            document.getElementById('status').className = className || '';
-        }
+        });
     </script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </body>
-</html>
+</html> Эд
