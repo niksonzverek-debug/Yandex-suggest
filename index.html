@@ -6,10 +6,11 @@
     <!-- Подключаем Яндекс.Карты с твоими ключами -->
     <script src="https://api-maps.yandex.ru/2.1/?apikey=05bead68-7d43-45f3-92ac-a086140b1f39&suggest_apikey=c26df761-b526-4c54-a189-34d436e07268&lang=ru_RU" type="text/javascript"></script>
     <style>
-        body { font-family: sans-serif; padding: 16px; margin: 0; background: #fff; }
-        #map { width: 100%; height: 300px; margin-bottom: 16px; border-radius: 12px; border: 2px solid #007AFF; }
-        #address { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; margin-bottom: 8px; }
-        .note { font-size: 14px; color: #666; margin-top: 8px; text-align: center; }
+        body { font-family: sans-serif; padding: 0; margin: 0; background: #fff; height: 100vh; display: flex; flex-direction: column; }
+        #map { width: 100%; flex: 1; }
+        .search-container { padding: 16px; background: white; border-bottom: 1px solid #eee; }
+        #address { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+        .note { font-size: 14px; color: #666; text-align: center; margin-top: 8px; }
         .loader { border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 20px auto; display: none; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .error { color: red; text-align: center; margin-top: 10px; }
@@ -18,9 +19,10 @@
     </style>
 </head>
 <body>
-    <h3>📍 Укажите точный адрес</h3>
-    <input type="text" id="address" placeholder="Например: Голливуд, Ашан, Капланбек..." autocomplete="off" autofocus>
-    <button id="locate" class="location-btn">📍 Моё местоположение</button>
+    <div class="search-container">
+        <input type="text" id="address" placeholder="Например: Голливуд, Ашан, Капланбек..." autocomplete="off" autofocus>
+        <button id="locate" class="location-btn">📍 Моё местоположение</button>
+    </div>
     <div id="map"></div>
     <div class="note">Начните вводить адрес и выберите из списка</div>
     <div id="loader" class="loader"></div>
@@ -41,17 +43,50 @@
                 zoom: 12
             });
 
+            // Добавляем стандартный поиск на карту (лупа)
+            var searchControl = new ymaps.control.SearchControl({
+                options: {
+                    float: 'right',
+                    noPlacemark: false,
+                    provider: 'yandex#search'
+                }
+            });
+            map.controls.add(searchControl);
+
+            // Обрабатываем событие выбора результата в поиске
+            searchControl.events.add('resultselect', function (e) {
+                var index = e.get('index');
+                searchControl.getResult(index).then(function (res) {
+                    var coords = res.geometry.getCoordinates();
+                    var address = res.properties.get('name');
+                    console.log('Поиск выбрал:', address, coords);
+                    processSelection(address, coords);
+                });
+            });
+
+            // Также обрабатываем событие "load" для результатов поиска (если пользователь нажал Enter)
+            searchControl.events.add('load', function (e) {
+                var results = e.get('target').getResultsArray();
+                if (results && results.length > 0) {
+                    var first = results[0];
+                    var coords = first.geometry.getCoordinates();
+                    var address = first.properties.get('name');
+                    console.log('Поиск загрузил:', address, coords);
+                    processSelection(address, coords);
+                }
+            });
+
             // Подключаем подсказки к полю ввода
             var suggestView = new ymaps.controls.SuggestView('address');
             
-            // Обработка выбора подсказки
+            // Обработка выбора подсказки из поля ввода
             suggestView.events.add('select', function (e) {
                 if (isProcessing) return;
                 isProcessing = true;
                 
                 var item = e.get('item');
                 var selectedAddress = item.displayName;
-                console.log('Выбран адрес:', selectedAddress);
+                console.log('Выбран адрес из поля:', selectedAddress);
                 
                 document.getElementById('errorMsg').innerText = '';
                 document.getElementById('successMsg').style.display = 'none';
@@ -62,36 +97,7 @@
                     var firstGeoObject = res.geoObjects.get(0);
                     if (firstGeoObject) {
                         var coords = firstGeoObject.geometry.getCoordinates();
-                        console.log('Координаты:', coords);
-
-                        // Обновляем карту
-                        map.geoObjects.removeAll();
-                        var placemark = new ymaps.Placemark(coords, {
-                            balloonContent: selectedAddress
-                        });
-                        map.geoObjects.add(placemark);
-                        map.setCenter(coords, 15);
-
-                        // Формируем результат
-                        const result = {
-                            lat: coords[0],
-                            lon: coords[1],
-                            address: selectedAddress
-                        };
-
-                        console.log('✅ Результат готов:', result);
-
-                        // Показываем сообщение об отправке
-                        document.getElementById('successMsg').style.display = 'block';
-
-                        // Отправка в Telegram (если запущено как Mini App)
-                        if (window.Telegram && Telegram.WebApp) {
-                            Telegram.WebApp.sendData(JSON.stringify(result));
-                            Telegram.WebApp.close();
-                        } else {
-                            // Если не в Telegram, просто показываем alert (для теста)
-                            alert('Адрес выбран!\n' + JSON.stringify(result));
-                        }
+                        processSelection(selectedAddress, coords);
                     } else {
                         throw new Error('Геокодирование не дало результатов');
                     }
@@ -104,11 +110,45 @@
                 });
             });
 
-            // Обработка ошибок SuggestView (например, если нет сети)
+            // Обработка ошибок SuggestView
             suggestView.events.add('error', function (e) {
                 console.error('Ошибка SuggestView:', e);
                 document.getElementById('errorMsg').innerText = '❌ Ошибка получения подсказок. Проверьте интернет.';
             });
+        }
+
+        // Функция для обработки выбранного адреса и координат
+        function processSelection(address, coords) {
+            console.log('processSelection:', address, coords);
+            document.getElementById('loader').style.display = 'block';
+            document.getElementById('errorMsg').innerText = '';
+
+            // Обновляем карту
+            map.geoObjects.removeAll();
+            var placemark = new ymaps.Placemark(coords, {
+                balloonContent: address
+            });
+            map.geoObjects.add(placemark);
+            map.setCenter(coords, 15);
+
+            // Формируем результат
+            const result = {
+                lat: coords[0],
+                lon: coords[1],
+                address: address
+            };
+
+            console.log('✅ Результат готов:', result);
+            document.getElementById('successMsg').style.display = 'block';
+            document.getElementById('loader').style.display = 'none';
+
+            // Отправка в Telegram (если запущено как Mini App)
+            if (window.Telegram && Telegram.WebApp) {
+                Telegram.WebApp.sendData(JSON.stringify(result));
+                // Telegram.WebApp.close();
+            } else {
+                alert('Адрес выбран!\n' + JSON.stringify(result));
+            }
         }
 
         // Кнопка "Моё местоположение" (центрирует карту по геолокации пользователя)
@@ -124,6 +164,8 @@
                         balloonContent: 'Вы здесь'
                     });
                     map.geoObjects.add(placemark);
+                    // Можно также отправить эту точку как результат
+                    processSelection('Моё местоположение', [lat, lon]);
                 }, function(error) {
                     alert('Не удалось получить ваше местоположение: ' + error.message);
                 });
