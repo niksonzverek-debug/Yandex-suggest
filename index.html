@@ -5,98 +5,90 @@
     <title>Выбор адреса</title>
     <script src="https://api-maps.yandex.ru/2.1/?apikey=05bead68-7d43-45f3-92ac-a086140b1f39&lang=ru_RU" type="text/javascript"></script>
     <style>
-        body { margin: 0; padding: 0; height: 100vh; overflow: hidden; }
-        #map { width: 100%; height: 100%; }
+        body { margin: 0; padding: 0; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; }
+        #map { flex: 1; width: 100%; }
+        #confirm-btn {
+            background: #007AFF;
+            color: white;
+            border: none;
+            padding: 16px;
+            font-size: 20px;
+            font-weight: bold;
+            width: 100%;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        #confirm-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            text-align: center;
+            padding: 10px;
+            background: #f0f0f0;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
+    <button id="confirm-btn" disabled>✅ Подтвердить адрес</button>
+    <div class="status" id="status">Найдите адрес на карте</div>
 
     <script>
-        let map = null;
+        let map;
         let selectedCoords = null;
         let selectedAddress = '';
 
         ymaps.ready(init);
 
         function init() {
-            console.log('✅ API загружен, инициализация...');
-
-            // Создаём карту с центром в Ташкенте
             map = new ymaps.Map('map', {
                 center: [41.311, 69.279],
                 zoom: 12
             });
 
-            // Добавляем поисковую строку прямо на карту
+            // Добавляем поиск
             var searchControl = new ymaps.control.SearchControl({
-                options: {
-                    float: 'right',
-                    noPlacemark: false,
-                    provider: 'yandex#search'
-                }
+                options: { float: 'right' }
             });
             map.controls.add(searchControl);
 
-            // Обработка выбора результата поиска
+            // Когда пользователь выбирает результат в поиске
             searchControl.events.add('resultselect', function (e) {
                 var index = e.get('index');
                 searchControl.getResult(index).then(function (result) {
                     var coords = result.geometry.getCoordinates();
-                    var address = result.properties.get('name') || result.properties.get('description');
-                    console.log('✅ Выбрано:', address, coords);
-                    sendResult(address, coords);
-                }).catch(function (err) {
-                    console.error('Ошибка получения результата:', err);
-                });
-            });
-
-            // Обработка клика по метке на карте (если пользователь нажмёт на уже найденный объект)
-            searchControl.events.add('load', function (e) {
-                var results = e.get('target').getResultsArray();
-                if (results && results.length > 0) {
-                    // Если загрузились результаты, но пользователь ещё не выбрал — ничего не делаем
-                }
-            });
-
-            // Дополнительно: если пользователь кликнет по уже существующей метке на карте
-            map.events.add('click', function (e) {
-                var coords = e.get('coords');
-                // Пытаемся получить адрес по координатам (обратное геокодирование)
-                ymaps.geocode(coords).then(function (res) {
-                    var first = res.geoObjects.get(0);
-                    if (first) {
-                        var address = first.getAddressLine();
-                        sendResult(address, coords);
-                    }
-                }).catch(function (err) {
-                    console.error('Ошибка обратного геокодирования:', err);
+                    var address = result.properties.get('name') || result.properties.get('description') || 'Выбранное место';
+                    selectedCoords = coords;
+                    selectedAddress = address;
+                    document.getElementById('confirm-btn').disabled = false;
+                    document.getElementById('status').innerText = '✅ Адрес: ' + address;
                 });
             });
         }
 
-        function sendResult(address, coords) {
-            const result = {
-                lat: coords[0],
-                lon: coords[1],
-                address: address
-            };
-            console.log('📦 Отправка результата:', result);
-
-            // Отправка в Telegram (если запущено как Mini App)
-            if (window.Telegram && Telegram.WebApp) {
-                try {
-                    Telegram.WebApp.sendData(JSON.stringify(result));
-                    console.log('📤 Данные отправлены в Telegram');
-                    Telegram.WebApp.close();
-                } catch (e) {
-                    console.error('❌ Ошибка отправки в Telegram:', e);
-                }
-            } else {
-                // Для теста вне Telegram
-                alert('Адрес выбран:\n' + JSON.stringify(result));
+        // Кнопка подтверждения
+        document.getElementById('confirm-btn').addEventListener('click', function() {
+            if (!selectedCoords) {
+                alert('Сначала выберите адрес');
+                return;
             }
-        }
+            const result = {
+                lat: selectedCoords[0],
+                lon: selectedCoords[1],
+                address: selectedAddress
+            };
+            console.log('📦 Отправка:', result);
+
+            // Отправляем в Telegram Mini App
+            if (window.Telegram && Telegram.WebApp) {
+                Telegram.WebApp.sendData(JSON.stringify(result));
+                // Закрываем после отправки
+                Telegram.WebApp.close();
+            } else {
+                alert('Адрес выбран (тест):\n' + JSON.stringify(result));
+            }
+        });
     </script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </body>
