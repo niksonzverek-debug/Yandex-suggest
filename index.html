@@ -2,14 +2,15 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Введите адрес</title>
+    <title>Выбор адреса</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <!-- Подключаем только SuggestView и геокодер (без карты) -->
-    <script src="https://api-maps.yandex.ru/2.1/?apikey=05bead68-7d43-45f3-92ac-a086140b1f39&suggest_apikey=c26df761-b526-4c54-a189-34d436e07268&lang=ru_RU&load=SuggestView,geocode" type="text/javascript"></script>
     <style>
         body { margin: 0; padding: 20px; font-family: sans-serif; background: #f5f5f5; }
         .container { max-width: 500px; margin: 0 auto; }
         #address { width: 100%; padding: 15px; font-size: 18px; border: 1px solid #ccc; border-radius: 10px; box-sizing: border-box; }
+        #suggestions { list-style: none; padding: 0; margin: 10px 0 0; background: white; border: 1px solid #ccc; border-radius: 5px; max-height: 200px; overflow-y: auto; display: none; }
+        #suggestions li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
+        #suggestions li:hover { background: #f0f0f0; }
         #status { margin-top: 20px; text-align: center; color: #666; }
         .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; display: none; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -17,53 +18,89 @@
 </head>
 <body>
     <div class="container">
-        <h3>📍 Введите адрес назначения</h3>
-        <input type="text" id="address" placeholder="Например: Гульсара, Голливуд..." autocomplete="off" autofocus>
+        <h3>📍 Введите адрес или название организации</h3>
+        <input type="text" id="address" placeholder="Например: Гульсара, Голливуд, Ашан..." autocomplete="off" autofocus>
+        <ul id="suggestions"></ul>
         <div id="loader" class="loader"></div>
         <div id="status"></div>
     </div>
 
     <script>
         let isProcessing = false;
+        let selectedCoords = null;
+        let selectedAddress = '';
+        let suggestionsList = document.getElementById('suggestions');
+        let addressInput = document.getElementById('address');
+        let loader = document.getElementById('loader');
+        let status = document.getElementById('status');
+        let timeoutId = null;
 
-        ymaps.ready(function() {
-            var suggestView = new ymaps.controls.SuggestView('address');
-            suggestView.events.add('select', function (e) {
-                if (isProcessing) return;
-                isProcessing = true;
-                var item = e.get('item');
-                var selectedAddress = item.displayName;
-                document.getElementById('loader').style.display = 'block';
-                document.getElementById('status').innerText = '🔍 Ищем координаты...';
-
-                ymaps.geocode(selectedAddress).then(function (res) {
-                    var first = res.geoObjects.get(0);
-                    if (first) {
-                        var coords = first.geometry.getCoordinates();
-                        var fullAddress = first.getAddressLine() || selectedAddress;
-                        var result = { lat: coords[0], lon: coords[1], address: fullAddress };
-                        console.log('✅ Результат:', result);
-                        document.getElementById('status').innerText = '✅ Отправка...';
-                        if (window.Telegram && Telegram.WebApp) {
-                            Telegram.WebApp.sendData(JSON.stringify(result));
-                            setTimeout(() => Telegram.WebApp.close(), 300);
-                        } else {
-                            alert('Адрес выбран:\n' + JSON.stringify(result));
-                            document.getElementById('loader').style.display = 'none';
-                            isProcessing = false;
-                        }
-                    } else {
-                        throw new Error('Не удалось найти координаты');
-                    }
-                }).catch(function (err) {
-                    console.error(err);
-                    document.getElementById('status').innerText = '❌ Ошибка. Попробуйте другой адрес.';
-                    document.getElementById('loader').style.display = 'none';
-                    isProcessing = false;
-                });
-            });
+        addressInput.addEventListener('input', function() {
+            const query = this.value.trim();
+            if (query.length < 3) {
+                suggestionsList.style.display = 'none';
+                return;
+            }
+            if (timeoutId) clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => fetchSuggestions(query), 300);
         });
+
+        function fetchSuggestions(query) {
+            const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&limit=10&countrycodes=uz`;
+            fetch(url, {
+                headers: { 'User-Agent': 'TaxiBot/1.0 (your-email@example.com)' } // ⬅️ замените на свои данные
+            })
+            .then(response => response.json())
+            .then(data => {
+                displaySuggestions(data);
+            })
+            .catch(error => {
+                console.error('Ошибка Nominatim:', error);
+                status.innerText = '❌ Ошибка загрузки подсказок';
+            });
+        }
+
+        function displaySuggestions(items) {
+            suggestionsList.innerHTML = '';
+            if (items.length === 0) {
+                suggestionsList.style.display = 'none';
+                return;
+            }
+            items.forEach(item => {
+                const li = document.createElement('li');
+                li.textContent = item.display_name;
+                li.addEventListener('click', () => selectAddress(item));
+                suggestionsList.appendChild(li);
+            });
+            suggestionsList.style.display = 'block';
+        }
+
+        function selectAddress(item) {
+            if (isProcessing) return;
+            isProcessing = true;
+            selectedCoords = [parseFloat(item.lat), parseFloat(item.lon)];
+            selectedAddress = item.display_name;
+            suggestionsList.style.display = 'none';
+            addressInput.value = selectedAddress;
+            loader.style.display = 'block';
+            status.innerText = '✅ Отправка...';
+            sendResult(selectedAddress, selectedCoords);
+        }
+
+        function sendResult(address, coords) {
+            const result = { lat: coords[0], lon: coords[1], address: address };
+            console.log('✅ Результат:', result);
+            if (window.Telegram && Telegram.WebApp) {
+                Telegram.WebApp.sendData(JSON.stringify(result));
+                setTimeout(() => Telegram.WebApp.close(), 300);
+            } else {
+                alert('Адрес выбран:\n' + JSON.stringify(result));
+                loader.style.display = 'none';
+                status.innerText = '';
+                isProcessing = false;
+            }
+        }
     </script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </body>
-</html> Эд
+</html>
