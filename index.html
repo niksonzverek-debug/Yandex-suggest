@@ -7,31 +7,34 @@
     <script src="https://api-maps.yandex.ru/2.1/?apikey=05bead68-7d43-45f3-92ac-a086140b1f39&suggest_apikey=c26df761-b526-4c54-a189-34d436e07268&lang=ru_RU" type="text/javascript"></script>
     <style>
         body { font-family: sans-serif; padding: 16px; margin: 0; background: #fff; }
-        /* Красная рамка поможет увидеть, есть ли карта */
-        #map { width: 100%; height: 300px; margin-bottom: 16px; border-radius: 12px; border: 2px solid red; }
-        #address { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+        #map { width: 100%; height: 300px; margin-bottom: 16px; border-radius: 12px; border: 2px solid #007AFF; }
+        #address { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; margin-bottom: 8px; }
         .note { font-size: 14px; color: #666; margin-top: 8px; text-align: center; }
-        button { width: 100%; padding: 14px; font-size: 18px; background: #007AFF; color: white; border: none; border-radius: 10px; margin-top: 16px; font-weight: 600; }
+        button { width: 100%; padding: 14px; font-size: 18px; background: #007AFF; color: white; border: none; border-radius: 10px; margin-top: 16px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+        button:disabled { background: #ccc; cursor: not-allowed; opacity: 0.7; }
+        .location-btn { background: #34C759; margin-top: 8px; }
+        .error { color: red; text-align: center; margin-top: 10px; }
     </style>
 </head>
 <body>
     <h3>📍 Укажите точный адрес</h3>
-    <!-- autocomplete="off" убирает предупреждение в консоли -->
-    <input type="text" id="address" placeholder="Например: Голливуд, Ашан, Капланбек..." autocomplete="off">
+    <input type="text" id="address" placeholder="Например: Голливуд, Ашан, Капланбек..." autocomplete="off" autofocus>
+    <button id="locate" class="location-btn">📍 Моё местоположение</button>
     <div id="map"></div>
     <div class="note">Начните вводить адрес и выберите из списка</div>
-    <button id="send">✅ Подтвердить адрес</button>
+    <button id="send" disabled>✅ Подтвердить адрес</button>
+    <div id="errorMsg" class="error"></div>
 
     <script>
         let selectedCoords = null;
         let selectedAddress = '';
+        let map = null;
 
-        // Ждём загрузки API и запускаем карту
         ymaps.ready(init);
 
         function init() {
             // Создаём карту с центром в Ташкенте
-            var map = new ymaps.Map('map', {
+            map = new ymaps.Map('map', {
                 center: [41.311, 69.279],
                 zoom: 12
             });
@@ -41,25 +44,59 @@
             suggestView.events.add('select', function (e) {
                 var item = e.get('item');
                 selectedAddress = item.displayName;
+                document.getElementById('errorMsg').innerText = '';
 
-                // Получаем координаты выбранного адреса
+                // Геокодируем выбранный адрес, чтобы получить координаты
                 ymaps.geocode(selectedAddress).then(function (res) {
                     var firstGeoObject = res.geoObjects.get(0);
-                    var coords = firstGeoObject.geometry.getCoordinates();
-                    selectedCoords = coords;
+                    if (firstGeoObject) {
+                        var coords = firstGeoObject.geometry.getCoordinates();
+                        selectedCoords = coords;
 
-                    // Ставим метку и приближаем карту
-                    map.geoObjects.removeAll();
-                    var placemark = new ymaps.Placemark(coords, {
-                        balloonContent: selectedAddress
-                    });
-                    map.geoObjects.add(placemark);
-                    map.setCenter(coords, 15);
+                        // Обновляем карту
+                        map.geoObjects.removeAll();
+                        var placemark = new ymaps.Placemark(coords, {
+                            balloonContent: selectedAddress
+                        });
+                        map.geoObjects.add(placemark);
+                        map.setCenter(coords, 15);
+
+                        // Активируем кнопку подтверждения
+                        document.getElementById('send').disabled = false;
+                    } else {
+                        throw new Error('Адрес не найден');
+                    }
+                }).catch(function (err) {
+                    console.error('Ошибка геокодирования:', err);
+                    document.getElementById('errorMsg').innerText = 'Не удалось определить координаты. Попробуйте другой адрес.';
+                    selectedCoords = null;
+                    document.getElementById('send').disabled = true;
                 });
+            });
+
+            // Обработка нажатия на кнопку "Моё местоположение"
+            document.getElementById('locate').addEventListener('click', function() {
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(function(position) {
+                        var lat = position.coords.latitude;
+                        var lon = position.coords.longitude;
+                        map.setCenter([lat, lon], 15);
+                        // Можно также поставить метку
+                        map.geoObjects.removeAll();
+                        var placemark = new ymaps.Placemark([lat, lon], {
+                            balloonContent: 'Вы здесь'
+                        });
+                        map.geoObjects.add(placemark);
+                    }, function(error) {
+                        alert('Не удалось получить ваше местоположение: ' + error.message);
+                    });
+                } else {
+                    alert('Геолокация не поддерживается браузером');
+                }
             });
         }
 
-        // Кнопка "Подтвердить адрес"
+        // Обработка нажатия на кнопку подтверждения
         document.getElementById('send').addEventListener('click', function() {
             if (!selectedCoords) {
                 alert('Сначала выберите адрес из списка');
@@ -70,13 +107,16 @@
                 lon: selectedCoords[1],
                 address: selectedAddress
             };
-            // Пока просто покажем в консоли и алерте (для теста в браузере)
             console.log('✅ Выбранный адрес:', result);
-            alert('Адрес выбран! Проверьте консоль (F12) для получения координат.');
-            // Позже, когда подключим к боту, здесь будет отправка в Telegram
+            // Отправка в Telegram (если запущено как Mini App)
+            if (window.Telegram && Telegram.WebApp) {
+                Telegram.WebApp.sendData(JSON.stringify(result));
+                Telegram.WebApp.close();
+            } else {
+                alert('Данные: ' + JSON.stringify(result));
+            }
         });
     </script>
-    <!-- Этот скрипт нужен для работы Telegram Mini App, но для теста в браузере не обязателен -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </body>
 </html>
