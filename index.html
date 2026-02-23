@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Выбор адреса</title>
+    <!-- Подключаем Яндекс.Карты с твоими ключами (версия 2.1, все модули) -->
+    <script src="https://api-maps.yandex.ru/2.1/?apikey=05bead68-7d43-45f3-92ac-a086140b1f39&suggest_apikey=c26df761-b526-4c54-a189-34d436e07268&lang=ru_RU" type="text/javascript"></script>
+    <style>
+        body { font-family: sans-serif; padding: 16px; margin: 0; background: #fff; }
+        /* Красная рамка поможет увидеть, есть ли карта */
+        #map { width: 100%; height: 300px; margin-bottom: 16px; border-radius: 12px; border: 2px solid red; }
+        #address { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+        .note { font-size: 14px; color: #666; margin-top: 8px; text-align: center; }
+        button { width: 100%; padding: 14px; font-size: 18px; background: #007AFF; color: white; border: none; border-radius: 10px; margin-top: 16px; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <h3>📍 Укажите точный адрес</h3>
+    <!-- autocomplete="off" убирает предупреждение в консоли -->
+    <input type="text" id="address" placeholder="Например: Голливуд, Ашан, Капланбек..." autocomplete="off">
+    <div id="map"></div>
+    <div class="note">Начните вводить адрес и выберите из списка</div>
+    <button id="send">✅ Подтвердить адрес</button>
+
+    <script>
+        let selectedCoords = null;
+        let selectedAddress = '';
+
+        // Ждём загрузки API и запускаем карту
+        ymaps.ready(init);
+
+        function init() {
+            // Создаём карту с центром в Ташкенте
+            var map = new ymaps.Map('map', {
+                center: [41.311, 69.279],
+                zoom: 12
+            });
+
+            // Подключаем подсказки к полю ввода
+            var suggestView = new ymaps.controls.SuggestView('address');
+            suggestView.events.add('select', function (e) {
+                var item = e.get('item');
+                selectedAddress = item.displayName;
+
+                // Получаем координаты выбранного адреса
+                ymaps.geocode(selectedAddress).then(function (res) {
+                    var firstGeoObject = res.geoObjects.get(0);
+                    var coords = firstGeoObject.geometry.getCoordinates();
+                    selectedCoords = coords;
+
+                    // Ставим метку и приближаем карту
+                    map.geoObjects.removeAll();
+                    var placemark = new ymaps.Placemark(coords, {
+                        balloonContent: selectedAddress
+                    });
+                    map.geoObjects.add(placemark);
+                    map.setCenter(coords, 15);
+                });
+            });
+        }
+
+        // Кнопка "Подтвердить адрес"
+        document.getElementById('send').addEventListener('click', function() {
+            if (!selectedCoords) {
+                alert('Сначала выберите адрес из списка');
+                return;
+            }
+            const result = {
+                lat: selectedCoords[0],
+                lon: selectedCoords[1],
+                address: selectedAddress
+            };
+            // Пока просто покажем в консоли и алерте (для теста в браузере)
+            console.log('✅ Выбранный адрес:', result);
+            alert('Адрес выбран! Проверьте консоль (F12) для получения координат.');
+            // Позже, когда подключим к боту, здесь будет отправка в Telegram
+        });
+    </script>
+    <!-- Этот скрипт нужен для работы Telegram Mini App, но для теста в браузере не обязателен -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</body>
+</html>
