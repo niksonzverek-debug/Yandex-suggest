@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <title>Выбор адреса</title>
+    <!-- Подключаем Яндекс.Карты с твоими ключами -->
     <script src="https://api-maps.yandex.ru/2.1/?apikey=05bead68-7d43-45f3-92ac-a086140b1f39&suggest_apikey=c26df761-b526-4c54-a189-34d436e07268&lang=ru_RU" type="text/javascript"></script>
     <style>
         body { font-family: sans-serif; padding: 16px; margin: 0; background: #fff; }
@@ -13,11 +14,13 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .error { color: red; text-align: center; margin-top: 10px; }
         .success { color: green; text-align: center; margin-top: 10px; display: none; }
+        .location-btn { background: #34C759; color: white; border: none; border-radius: 10px; padding: 12px; width: 100%; font-size: 16px; margin-bottom: 10px; cursor: pointer; }
     </style>
 </head>
 <body>
     <h3>📍 Укажите точный адрес</h3>
     <input type="text" id="address" placeholder="Например: Голливуд, Ашан, Капланбек..." autocomplete="off" autofocus>
+    <button id="locate" class="location-btn">📍 Моё местоположение</button>
     <div id="map"></div>
     <div class="note">Начните вводить адрес и выберите из списка</div>
     <div id="loader" class="loader"></div>
@@ -26,10 +29,12 @@
 
     <script>
         let map = null;
+        let isProcessing = false;
 
         ymaps.ready(init);
 
         function init() {
+            console.log('✅ API загружен, инициализация...');
             // Создаём карту с центром в Ташкенте
             map = new ymaps.Map('map', {
                 center: [41.311, 69.279],
@@ -38,13 +43,18 @@
 
             // Подключаем подсказки к полю ввода
             var suggestView = new ymaps.controls.SuggestView('address');
+            
+            // Обработка выбора подсказки
             suggestView.events.add('select', function (e) {
+                if (isProcessing) return;
+                isProcessing = true;
+                
                 var item = e.get('item');
                 var selectedAddress = item.displayName;
+                console.log('Выбран адрес:', selectedAddress);
+                
                 document.getElementById('errorMsg').innerText = '';
                 document.getElementById('successMsg').style.display = 'none';
-
-                // Показываем загрузку
                 document.getElementById('loader').style.display = 'block';
 
                 // Геокодируем выбранный адрес, чтобы получить координаты
@@ -52,6 +62,7 @@
                     var firstGeoObject = res.geoObjects.get(0);
                     if (firstGeoObject) {
                         var coords = firstGeoObject.geometry.getCoordinates();
+                        console.log('Координаты:', coords);
 
                         // Обновляем карту
                         map.geoObjects.removeAll();
@@ -61,16 +72,17 @@
                         map.geoObjects.add(placemark);
                         map.setCenter(coords, 15);
 
-                        // Показываем сообщение об успехе
-                        document.getElementById('successMsg').style.display = 'block';
-
-                        // Формируем результат и отправляем
+                        // Формируем результат
                         const result = {
                             lat: coords[0],
                             lon: coords[1],
                             address: selectedAddress
                         };
-                        console.log('✅ Выбранный адрес:', result);
+
+                        console.log('✅ Результат готов:', result);
+
+                        // Показываем сообщение об отправке
+                        document.getElementById('successMsg').style.display = 'block';
 
                         // Отправка в Telegram (если запущено как Mini App)
                         if (window.Telegram && Telegram.WebApp) {
@@ -78,19 +90,47 @@
                             Telegram.WebApp.close();
                         } else {
                             // Если не в Telegram, просто показываем alert (для теста)
-                            alert('Адрес выбран! (проверьте консоль)');
+                            alert('Адрес выбран!\n' + JSON.stringify(result));
                         }
                     } else {
-                        throw new Error('Адрес не найден');
+                        throw new Error('Геокодирование не дало результатов');
                     }
                 }).catch(function (err) {
                     console.error('Ошибка геокодирования:', err);
                     document.getElementById('errorMsg').innerText = '❌ Не удалось найти координаты. Попробуйте другой адрес.';
                 }).finally(function () {
                     document.getElementById('loader').style.display = 'none';
+                    isProcessing = false;
                 });
             });
+
+            // Обработка ошибок SuggestView (например, если нет сети)
+            suggestView.events.add('error', function (e) {
+                console.error('Ошибка SuggestView:', e);
+                document.getElementById('errorMsg').innerText = '❌ Ошибка получения подсказок. Проверьте интернет.';
+            });
         }
+
+        // Кнопка "Моё местоположение" (центрирует карту по геолокации пользователя)
+        document.getElementById('locate').addEventListener('click', function() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(function(position) {
+                    var lat = position.coords.latitude;
+                    var lon = position.coords.longitude;
+                    map.setCenter([lat, lon], 15);
+                    // Можно поставить метку
+                    map.geoObjects.removeAll();
+                    var placemark = new ymaps.Placemark([lat, lon], {
+                        balloonContent: 'Вы здесь'
+                    });
+                    map.geoObjects.add(placemark);
+                }, function(error) {
+                    alert('Не удалось получить ваше местоположение: ' + error.message);
+                });
+            } else {
+                alert('Геолокация не поддерживается браузером');
+            }
+        });
     </script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </body>
