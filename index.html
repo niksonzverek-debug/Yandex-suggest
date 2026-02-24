@@ -35,13 +35,12 @@
     </div>
 
     <script>
-        // Инициализация Telegram WebApp
+        // Глобальная переменная для Telegram WebApp
         let tg = window.Telegram?.WebApp;
         if (tg) {
             tg.ready();
             tg.expand();
-            tg.enableClosingConfirmation(); // Запрос подтверждения перед закрытием
-            console.log("Telegram WebApp инициализирован");
+            console.log("Telegram WebApp инициализирован, версия:", tg.version);
         } else {
             console.warn("Telegram WebApp не найден, работаем в тестовом режиме");
         }
@@ -147,16 +146,18 @@
                 address: selectedAddress
             };
             
-            console.log('Отправка:', result);
+            console.log('Отправка данных:', result);
             
             if (tg) {
                 try {
                     tg.sendData(JSON.stringify(result));
+                    console.log('Данные отправлены, закрываю приложение');
                     tg.close();
                 } catch (e) {
                     console.error('Ошибка отправки в Telegram:', e);
                     alert('Ошибка отправки: ' + e.message);
                     isProcessing = false;
+                    document.getElementById('status').innerText = 'Ошибка отправки';
                 }
             } else {
                 alert('Адрес выбран (тестовый режим):\n' + JSON.stringify(result));
