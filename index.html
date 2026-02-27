@@ -8,19 +8,23 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; }
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; }
         #search-container { padding: 10px; background: white; z-index: 1000; }
         #address { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
         #suggestions { list-style: none; padding: 0; margin: 5px 0 0; background: white; border: 1px solid #ccc; border-radius: 5px; max-height: 150px; overflow-y: auto; display: none; }
         #suggestions li { padding: 8px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 14px; }
         #suggestions li:hover { background: #f0f0f0; }
         #map { flex: 1; width: 100%; }
-        #footer { padding: 10px; background: white; border-top: 1px solid #ddd; }
-        #confirm-btn { width: 100%; padding: 15px; font-size: 18px; background: #007AFF; color: white; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; }
+        #footer { padding: 10px; background: white; border-top: 1px solid #ddd; display: flex; gap: 8px; flex-wrap: wrap; }
+        #footer button { flex: 1; padding: 12px; font-size: 16px; border: none; border-radius: 8px; font-weight: 500; cursor: pointer; }
+        #confirm-btn { background: #007AFF; color: white; }
         #confirm-btn:disabled { background: #ccc; cursor: not-allowed; }
-        .status { text-align: center; margin-top: 8px; color: #666; font-size: 14px; }
+        #location-btn { background: #34C759; color: white; display: flex; align-items: center; justify-content: center; gap: 5px; }
+        #location-btn svg { width: 18px; height: 18px; fill: white; }
+        .status { text-align: center; margin-top: 8px; color: #666; font-size: 14px; width: 100%; }
         .loader { border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; margin: 0 auto; display: inline-block; vertical-align: middle; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .error { color: #FF3B30; }
     </style>
 </head>
 <body>
@@ -30,12 +34,16 @@
     </div>
     <div id="map"></div>
     <div id="footer">
+        <button id="location-btn" title="Моё местоположение">
+            <svg viewBox="0 0 24 24"><path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/></svg>
+            Моё местоположение
+        </button>
         <button id="confirm-btn" disabled>✅ Подтвердить адрес</button>
         <div class="status" id="status">📍 Введите адрес или выберите на карте</div>
     </div>
 
     <script>
-        // Глобальная переменная для Telegram WebApp
+        // Telegram WebApp
         let tg = window.Telegram?.WebApp;
         if (tg) {
             tg.ready();
@@ -51,38 +59,48 @@
         let selectedAddress = "";
         let isProcessing = false;
 
-        // Инициализация карты (центр Ташкента)
-        map = L.map('map').setView([41.311, 69.279], 12);
+        // Центр Ташкента по умолчанию
+        const defaultCenter = [41.311, 69.279];
+
+        map = L.map('map').setView(defaultCenter, 12);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        // Создаём перемещаемый маркер (изначально скрыт)
-        marker = L.marker([41.311, 69.279], {draggable: true}).addTo(map);
-        marker.on('dragend', function(e) {
-            var pos = e.target.getLatLng();
-            selectedCoords = [pos.lat, pos.lng];
-            
-            // Получаем адрес по координатам (обратное геокодирование)
-            fetch(`https://nominatim.openstreetmap.org/reverse?lat=${pos.lat}&lon=${pos.lng}&format=json`)
+        // Маркер (изначально скрыт)
+        marker = L.marker(defaultCenter, {draggable: true}).addTo(map);
+        marker.on('dragend', onMarkerDragEnd);
+        map.removeLayer(marker); // скрываем до первого выбора
+
+        // Функция обновления адреса по координатам
+        function reverseGeocode(lat, lon, callback) {
+            const statusEl = document.getElementById('status');
+            statusEl.innerHTML = '<span class="loader"></span> Определяем адрес...';
+            fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&addressdetails=1`)
                 .then(r => r.json())
                 .then(data => {
-                    selectedAddress = data.display_name || 'Перемещённая точка';
+                    selectedAddress = data.display_name || `Координаты: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
                     document.getElementById('address').value = selectedAddress;
                     document.getElementById('confirm-btn').disabled = false;
-                    document.getElementById('status').innerText = '✅ Адрес получен с карты';
+                    statusEl.innerText = '✅ Адрес получен';
+                    if (callback) callback(selectedAddress);
                 })
                 .catch(() => {
-                    selectedAddress = `Координаты: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
+                    selectedAddress = `Координаты: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
                     document.getElementById('address').value = selectedAddress;
                     document.getElementById('confirm-btn').disabled = false;
+                    statusEl.innerText = '✅ Адрес получен (по координатам)';
+                    if (callback) callback(selectedAddress);
                 });
-        });
+        }
 
-        // Скрываем маркер, пока ничего не выбрано
-        map.removeLayer(marker);
+        function onMarkerDragEnd(e) {
+            const pos = e.target.getLatLng();
+            selectedCoords = [pos.lat, pos.lng];
+            reverseGeocode(pos.lat, pos.lng);
+        }
 
-        // Поиск подсказок через Nominatim
+        // Поиск подсказок
         let timeoutId = null;
         document.getElementById('address').addEventListener('input', function(e) {
             const query = e.target.value.trim();
@@ -128,11 +146,36 @@
             document.getElementById('confirm-btn').disabled = false;
             document.getElementById('status').innerText = '✅ Адрес выбран из списка';
 
-            // Показываем и перемещаем маркер
             if (!map.hasLayer(marker)) marker.addTo(map);
             marker.setLatLng([lat, lon]);
             map.setView([lat, lon], 15);
         }
+
+        // Кнопка "Моё местоположение"
+        document.getElementById('location-btn').addEventListener('click', function() {
+            if (!navigator.geolocation) {
+                document.getElementById('status').innerText = '❌ Геолокация не поддерживается';
+                return;
+            }
+            document.getElementById('status').innerHTML = '<span class="loader"></span> Получение местоположения...';
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    const lat = pos.coords.latitude;
+                    const lon = pos.coords.longitude;
+                    selectedCoords = [lat, lon];
+                    if (!map.hasLayer(marker)) marker.addTo(map);
+                    marker.setLatLng([lat, lon]);
+                    map.setView([lat, lon], 15);
+                    reverseGeocode(lat, lon, () => {
+                        document.getElementById('status').innerText = '📍 Местоположение получено';
+                    });
+                },
+                function(err) {
+                    console.error(err);
+                    document.getElementById('status').innerText = '❌ Не удалось получить местоположение';
+                }
+            );
+        });
 
         // Кнопка подтверждения
         document.getElementById('confirm-btn').addEventListener('click', function() {
@@ -155,9 +198,8 @@
                     tg.close();
                 } catch (e) {
                     console.error('Ошибка отправки в Telegram:', e);
-                    alert('Ошибка отправки: ' + e.message);
+                    document.getElementById('status').innerHTML = '<span class="error">❌ Ошибка отправки</span>';
                     isProcessing = false;
-                    document.getElementById('status').innerText = 'Ошибка отправки';
                 }
             } else {
                 alert('Адрес выбран (тестовый режим):\n' + JSON.stringify(result));
