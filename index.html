@@ -4,88 +4,157 @@
     <meta charset="utf-8">
     <title>Выбор адреса</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <script src="https://api-maps.yandex.ru/2.1/?apikey=05bead68-7d43-45f3-92ac-a086140b1f39&lang=ru_RU"></script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        body {
-            font-family: sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-            padding: 20px;
-            box-sizing: border-box;
-            background: #f0f0f0;
-        }
-        button {
-            width: 100%;
-            padding: 20px;
-            font-size: 24px;
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+        #map { width: 100%; height: 100%; }
+        .confirm-btn {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            padding: 16px;
             background: #007AFF;
             color: white;
             border: none;
-            border-radius: 15px;
-            margin: 10px 0;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
             cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
         }
-        #status {
-            margin-top: 20px;
+        .confirm-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #address {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
             font-size: 16px;
-            color: #666;
-            text-align: center;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
     </style>
 </head>
 <body>
-    <button onclick="sendTestData()">📍 Отправить тестовый адрес</button>
-    <div id="status">Нажмите кнопку для отправки</div>
+    <input type="text" id="address" placeholder="Введите адрес">
+    <div id="map"></div>
+    <button class="confirm-btn" id="confirm-btn" disabled>✅ Подтвердить адрес</button>
 
     <script>
-        // Инициализация Telegram WebApp
-        let tg = window.Telegram?.WebApp;
+        let tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
         
-        if (tg) {
-            tg.ready();
-            tg.expand();
-            document.getElementById('status').innerText = '✅ Telegram WebApp готов';
-            console.log('Telegram WebApp инициализирован');
-        } else {
-            document.getElementById('status').innerText = '❌ Ошибка: не в Telegram';
-        }
+        let map, placemark;
+        let selectedCoords = null;
+        let selectedAddress = '';
 
-        function sendTestData() {
-            document.getElementById('status').innerText = 'Отправка...';
+        // Инициализация карты
+        ymaps.ready(function() {
+            map = new ymaps.Map('map', {
+                center: [41.311081, 69.240562],
+                zoom: 12
+            });
+
+            // Маркер
+            placemark = new ymaps.Placemark([41.311081, 69.240562], {}, {
+                draggable: true,
+                preset: 'islands#redDotIcon'
+            });
+            map.geoObjects.add(placemark);
+
+            // Поиск по адресу
+            const searchControl = new ymaps.control.SearchControl({
+                options: {
+                    useMapBounds: true,
+                    noPlacemark: true
+                }
+            });
+            map.controls.add(searchControl);
+
+            searchControl.events.add('load', function(event) {
+                const results = event.get('geoObjects');
+                if (results.getLength() > 0) {
+                    const result = results.get(0);
+                    const coords = result.geometry.getCoordinates();
+                    placemark.geometry.setCoordinates(coords);
+                    selectedCoords = coords;
+                    selectedAddress = result.properties.get('name') + ', ' + result.properties.get('description');
+                    document.getElementById('address').value = selectedAddress;
+                    document.getElementById('confirm-btn').disabled = false;
+                    map.setCenter(coords, 15);
+                }
+            });
+
+            // Перетаскивание маркера
+            placemark.events.add('dragend', function() {
+                const coords = placemark.geometry.getCoordinates();
+                selectedCoords = coords;
+                
+                // Обратное геокодирование
+                ymaps.geocode(coords).then(function(res) {
+                    const firstGeoObject = res.geoObjects.get(0);
+                    selectedAddress = firstGeoObject.getAddressLine();
+                    document.getElementById('address').value = selectedAddress;
+                    document.getElementById('confirm-btn').disabled = false;
+                });
+            });
+
+            // Клик по карте
+            map.events.add('click', function(e) {
+                const coords = e.get('coords');
+                placemark.geometry.setCoordinates(coords);
+                selectedCoords = coords;
+                
+                ymaps.geocode(coords).then(function(res) {
+                    const firstGeoObject = res.geoObjects.get(0);
+                    selectedAddress = firstGeoObject.getAddressLine();
+                    document.getElementById('address').value = selectedAddress;
+                    document.getElementById('confirm-btn').disabled = false;
+                });
+            });
+        });
+
+        // Отправка данных
+        document.getElementById('confirm-btn').addEventListener('click', function() {
+            if (!selectedCoords) return;
             
-            // Тестовые данные
-            const testData = {
-                lat: 41.311081,
-                lon: 69.240562,
-                address: "Ташкент, тестовый адрес"
+            const data = {
+                lat: selectedCoords[0],
+                lon: selectedCoords[1],
+                address: selectedAddress
             };
             
-            console.log('Отправка данных:', testData);
-            
-            if (tg) {
-                try {
-                    // Отправляем данные
-                    tg.sendData(JSON.stringify(testData));
-                    document.getElementById('status').innerText = '✅ Данные отправлены!';
-                    console.log('Данные отправлены, закрываем');
-                    // Закрываем через секунду
-                    setTimeout(() => tg.close(), 1000);
-                } catch (e) {
-                    document.getElementById('status').innerText = '❌ Ошибка: ' + e.message;
-                    console.error('Ошибка отправки:', e);
-                }
-            } else {
-                alert('Тестовый режим:\n' + JSON.stringify(testData));
-                document.getElementById('status').innerText = '✅ Данные отправлены (тест)';
-            }
-        }
+            console.log('Sending data:', data);
+            tg.sendData(JSON.stringify(data));
+            tg.close();
+        });
 
-        // Проверяем, что WebApp доступен
-        console.log('tg.sendData доступен:', typeof tg?.sendData === 'function');
+        // Поиск при вводе текста
+        document.getElementById('address').addEventListener('change', function(e) {
+            const value = e.target.value;
+            if (value.length > 2) {
+                ymaps.geocode(value, { results: 1 }).then(function(res) {
+                    const firstGeoObject = res.geoObjects.get(0);
+                    if (firstGeoObject) {
+                        const coords = firstGeoObject.geometry.getCoordinates();
+                        placemark.geometry.setCoordinates(coords);
+                        selectedCoords = coords;
+                        selectedAddress = firstGeoObject.getAddressLine();
+                        map.setCenter(coords, 15);
+                        document.getElementById('confirm-btn').disabled = false;
+                    }
+                });
+            }
+        });
     </script>
 </body>
 </html>
