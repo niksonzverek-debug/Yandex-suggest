@@ -8,7 +8,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+        body { margin: 0; padding: 0; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; }
         #search-container { padding: 10px; background: white; z-index: 1000; }
         #address { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
         #suggestions { list-style: none; padding: 0; margin: 5px 0 0; background: white; border: 1px solid #ccc; border-radius: 5px; max-height: 150px; overflow-y: auto; display: none; }
@@ -20,11 +20,11 @@
         #confirm-btn { background: #007AFF; color: white; }
         #confirm-btn:disabled { background: #ccc; cursor: not-allowed; }
         #location-btn { background: #34C759; color: white; display: flex; align-items: center; justify-content: center; gap: 5px; }
-        #location-btn svg { width: 18px; height: 18px; fill: white; }
         .status { text-align: center; margin-top: 8px; color: #666; font-size: 14px; width: 100%; }
         .loader { border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; margin: 0 auto; display: inline-block; vertical-align: middle; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .error { color: #FF3B30; }
+        .debug { font-size: 10px; color: #999; text-align: left; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -34,23 +34,35 @@
     </div>
     <div id="map"></div>
     <div id="footer">
-        <button id="location-btn" title="Моё местоположение">
-            <svg viewBox="0 0 24 24"><path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/></svg>
-            Моё местоположение
+        <button id="location-btn">
+            📍 Моё местоположение
         </button>
         <button id="confirm-btn" disabled>✅ Подтвердить адрес</button>
         <div class="status" id="status">📍 Введите адрес или выберите на карте</div>
+        <div class="debug" id="debug"></div>
     </div>
 
     <script>
         // Telegram WebApp
         let tg = window.Telegram?.WebApp;
+        let debugEl = document.getElementById('debug');
+        
+        function logDebug(msg) {
+            console.log(msg);
+            if (debugEl) {
+                debugEl.innerHTML += msg + '<br>';
+            }
+        }
+
+        logDebug('Страница загружена');
+        
         if (tg) {
             tg.ready();
             tg.expand();
-            console.log("Telegram WebApp инициализирован, версия:", tg.version);
+            logDebug('Telegram WebApp инициализирован, версия: ' + tg.version);
+            logDebug('initData: ' + (tg.initData ? 'есть' : 'нет'));
         } else {
-            console.warn("Telegram WebApp не найден, работаем в тестовом режиме");
+            logDebug('❌ Telegram WebApp не найден, работаем в тестовом режиме');
         }
 
         let map;
@@ -71,21 +83,26 @@
         marker = L.marker(defaultCenter, {draggable: true}).addTo(map);
         marker.on('dragend', onMarkerDragEnd);
         map.removeLayer(marker); // скрываем до первого выбора
+        logDebug('Карта инициализирована');
 
         // Функция обновления адреса по координатам
         function reverseGeocode(lat, lon, callback) {
             const statusEl = document.getElementById('status');
             statusEl.innerHTML = '<span class="loader"></span> Определяем адрес...';
+            logDebug(`Обратное геокодирование: ${lat}, ${lon}`);
+            
             fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&addressdetails=1`)
                 .then(r => r.json())
                 .then(data => {
+                    logDebug('Ответ Nominatim: ' + (data.display_name || 'нет адреса'));
                     selectedAddress = data.display_name || `Координаты: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
                     document.getElementById('address').value = selectedAddress;
                     document.getElementById('confirm-btn').disabled = false;
                     statusEl.innerText = '✅ Адрес получен';
                     if (callback) callback(selectedAddress);
                 })
-                .catch(() => {
+                .catch(err => {
+                    logDebug('Ошибка Nominatim: ' + err);
                     selectedAddress = `Координаты: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
                     document.getElementById('address').value = selectedAddress;
                     document.getElementById('confirm-btn').disabled = false;
@@ -97,6 +114,7 @@
         function onMarkerDragEnd(e) {
             const pos = e.target.getLatLng();
             selectedCoords = [pos.lat, pos.lng];
+            logDebug(`Маркер перемещён: ${pos.lat}, ${pos.lng}`);
             reverseGeocode(pos.lat, pos.lng);
         }
 
@@ -114,6 +132,7 @@
 
         function fetchSuggestions(query) {
             const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&limit=10&countrycodes=uz`;
+            logDebug('Поиск: ' + query);
             fetch(url, { headers: { 'User-Agent': 'TaxiBot/1.0' } })
                 .then(r => r.json())
                 .then(data => displaySuggestions(data))
@@ -134,6 +153,7 @@
                 list.appendChild(li);
             });
             list.style.display = 'block';
+            logDebug('Показано подсказок: ' + items.length);
         }
 
         function selectSuggestion(item) {
@@ -145,6 +165,7 @@
             document.getElementById('address').value = selectedAddress;
             document.getElementById('confirm-btn').disabled = false;
             document.getElementById('status').innerText = '✅ Адрес выбран из списка';
+            logDebug(`Выбрано из списка: ${lat}, ${lon} - ${selectedAddress}`);
 
             if (!map.hasLayer(marker)) marker.addTo(map);
             marker.setLatLng([lat, lon]);
@@ -153,8 +174,10 @@
 
         // Кнопка "Моё местоположение"
         document.getElementById('location-btn').addEventListener('click', function() {
+            logDebug('Нажата кнопка "Моё местоположение"');
             if (!navigator.geolocation) {
                 document.getElementById('status').innerText = '❌ Геолокация не поддерживается';
+                logDebug('❌ Геолокация не поддерживается');
                 return;
             }
             document.getElementById('status').innerHTML = '<span class="loader"></span> Получение местоположения...';
@@ -162,6 +185,7 @@
                 function(pos) {
                     const lat = pos.coords.latitude;
                     const lon = pos.coords.longitude;
+                    logDebug(`Получены координаты: ${lat}, ${lon}`);
                     selectedCoords = [lat, lon];
                     if (!map.hasLayer(marker)) marker.addTo(map);
                     marker.setLatLng([lat, lon]);
@@ -171,7 +195,7 @@
                     });
                 },
                 function(err) {
-                    console.error(err);
+                    logDebug('Ошибка геолокации: ' + err.message);
                     document.getElementById('status').innerText = '❌ Не удалось получить местоположение';
                 }
             );
@@ -179,7 +203,11 @@
 
         // Кнопка подтверждения
         document.getElementById('confirm-btn').addEventListener('click', function() {
-            if (isProcessing || !selectedCoords) return;
+            logDebug('=== НАЖАТА КНОПКА ПОДТВЕРЖДЕНИЯ ===');
+            if (isProcessing || !selectedCoords) {
+                logDebug('Блокировка: уже обрабатывается или нет координат');
+                return;
+            }
             isProcessing = true;
             document.getElementById('status').innerHTML = '<span class="loader"></span> Отправка...';
             
@@ -189,24 +217,30 @@
                 address: selectedAddress
             };
             
-            console.log('Отправка данных:', result);
+            logDebug('Данные для отправки: ' + JSON.stringify(result));
             
             if (tg) {
                 try {
+                    logDebug('Отправка через tg.sendData()...');
                     tg.sendData(JSON.stringify(result));
-                    console.log('Данные отправлены, закрываю приложение');
+                    logDebug('✅ tg.sendData() выполнена успешно');
+                    logDebug('Закрываю приложение...');
                     tg.close();
                 } catch (e) {
-                    console.error('Ошибка отправки в Telegram:', e);
+                    logDebug('❌ Ошибка отправки в Telegram: ' + e.message);
                     document.getElementById('status').innerHTML = '<span class="error">❌ Ошибка отправки</span>';
                     isProcessing = false;
                 }
             } else {
+                logDebug('⚠️ Тестовый режим (нет tg)');
                 alert('Адрес выбран (тестовый режим):\n' + JSON.stringify(result));
                 isProcessing = false;
                 document.getElementById('status').innerText = 'Адрес получен (тест)';
             }
         });
+
+        // Проверяем, что Telegram WebApp доступен
+        logDebug('Проверка tg.sendData: ' + (tg && typeof tg.sendData === 'function' ? 'доступна' : 'недоступна'));
     </script>
 </body>
 </html>
